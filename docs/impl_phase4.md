@@ -30,10 +30,10 @@ For the Endpoint Statistics application, we'll implement a combination of these 
 
 ### 1. Deployment Configuration
 
-The basic deployment configuration establishes how the application runs in the cluster, including its replicas, labels, and probes for health monitoring.
+The deployment configuration establishes how the application runs in the cluster, including its replicas, labels, and probes for health monitoring.
 
 ```yaml
-# deployment-config.yaml
+# k8s/deployment-strategy/flask-api-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -57,6 +57,10 @@ spec:
       labels:
         app: flask-api
         version: "1.0.0"  # Version label helps with traffic management
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: flask-api
@@ -97,6 +101,11 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]  # Grace period for connections to drain
+      terminationGracePeriodSeconds: 30  # Time for pod to shut down gracefully
 ```
 
 ### 2. Rolling Updates
@@ -136,7 +145,9 @@ spec:
 Blue-green deployments maintain two identical environments and switch traffic between them.
 
 ```yaml
-# blue-deployment.yaml
+# k8s/deployment-strategy/blue-green-deployment.yaml
+---
+# Blue deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -153,23 +164,39 @@ spec:
       labels:
         app: flask-api
         deployment: blue
+        version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: flask-api
-        image: shreeraj1746/endpoint-stats:v1.0.0
+        image: shreeraj1746/endpoint-stats:latest
         ports:
         - containerPort: 9999
-```
-
-```yaml
-# green-deployment.yaml
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9999
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+# Green deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flask-api-green
   namespace: endpoint-stats
 spec:
-  replicas: 3
+  replicas: 0  # Start with 0 replicas, scale up when ready to switch
   selector:
     matchLabels:
       app: flask-api
@@ -179,20 +206,36 @@ spec:
       labels:
         app: flask-api
         deployment: green
+        version: "2.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: flask-api
-        image: shreeraj1746/endpoint-stats:v2.0.0
+        image: shreeraj1746/endpoint-stats:latest
         ports:
         - containerPort: 9999
-```
-
-```yaml
-# service-switch.yaml
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9999
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+# Service to switch between blue and green
 apiVersion: v1
 kind: Service
 metadata:
-  name: flask-api
+  name: flask-api-bg
   namespace: endpoint-stats
 spec:
   selector:
@@ -209,7 +252,9 @@ spec:
 Canary deployments allow testing with a small subset of users before full rollout.
 
 ```yaml
-# canary-deployment.yaml
+# k8s/deployment-strategy/canary-deployment.yaml
+---
+# Canary deployment (small subset of traffic)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -227,16 +272,31 @@ spec:
         app: flask-api
         track: canary
         version: "2.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: flask-api
-        image: shreeraj1746/endpoint-stats:v2.0.0
+        image: shreeraj1746/endpoint-stats:latest
         ports:
         - containerPort: 9999
-```
-
-```yaml
-# stable-deployment.yaml
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9999
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+# Stable deployment (main traffic)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -254,20 +314,35 @@ spec:
         app: flask-api
         track: stable
         version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: flask-api
-        image: shreeraj1746/endpoint-stats:v1.0.0
+        image: shreeraj1746/endpoint-stats:latest
         ports:
         - containerPort: 9999
-```
-
-```yaml
-# canary-service.yaml
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9999
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+---
+# Service that selects both stable and canary deployments
 apiVersion: v1
 kind: Service
 metadata:
-  name: flask-api
+  name: flask-api-canary
   namespace: endpoint-stats
 spec:
   selector:
@@ -278,12 +353,12 @@ spec:
   type: ClusterIP
 ```
 
-### 5. Scaling Rules
+### 3. Scaling Rules
 
 Horizontal Pod Autoscaling (HPA) automatically adjusts the number of pods based on observed metrics.
 
 ```yaml
-# scaling-rules.yaml
+# k8s/deployment-strategy/flask-api-hpa.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -378,17 +453,18 @@ spec:
           storage: 10Gi
 ```
 
-### 7. Deployment Scripts
+### 5. Deployment Scripts
 
 Automation scripts help manage deployments and rollbacks efficiently.
 
 ```bash
+# scripts/deploy.sh
 #!/bin/bash
-# deploy.sh
+# deploy.sh - Script for deploying a new version of the Flask API
 
 set -e  # Exit immediately if a command exits with non-zero status
 
-# Get input parameters
+# Default values
 VERSION=${1:-latest}
 NAMESPACE=${2:-endpoint-stats}
 DEPLOYMENT=${3:-flask-api}
@@ -397,11 +473,11 @@ echo "Deploying $DEPLOYMENT version $VERSION to namespace $NAMESPACE"
 
 # Update deployment
 kubectl set image deployment/$DEPLOYMENT \
-  $DEPLOYMENT=your-registry/$DEPLOYMENT:${VERSION} \
+  $DEPLOYMENT=shreeraj1746/endpoint-stats:${VERSION} \
   -n $NAMESPACE
 
 # Record the change for easier rollback
-kubectl annotate deployment/$DEPLOYMENT kubernetes.io/change-cause="Deploying version $VERSION" -n $NAMESPACE
+kubectl annotate deployment/$DEPLOYMENT kubernetes.io/change-cause="Deploying version $VERSION" --overwrite -n $NAMESPACE
 
 # Monitor rollout
 kubectl rollout status deployment/$DEPLOYMENT -n $NAMESPACE
@@ -418,33 +494,18 @@ echo "Service endpoints:"
 kubectl get endpoints -n $NAMESPACE | grep $DEPLOYMENT
 ```
 
-### 8. Rollback Configuration
+### 6. Rollback Procedures
 
 Configure safe rollbacks in case of deployment issues.
 
-```yaml
-# rollback-config.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: flask-api
-  namespace: endpoint-stats
-spec:
-  revisionHistoryLimit: 10  # Keep 10 ReplicaSets for rollback purposes
-  template:
-    spec:
-      containers:
-      - name: flask-api
-        image: your-registry/flask-api:latest
-        terminationMessagePolicy: FallbackToLogsOnError  # Use logs for error context
-```
-
 ```bash
+# scripts/rollback.sh
 #!/bin/bash
-# rollback.sh
+# rollback.sh - Script for rolling back the Flask API to a previous version
 
-set -e
+set -e  # Exit immediately if a command exits with non-zero status
 
+# Default values
 DEPLOYMENT=${1:-flask-api}
 NAMESPACE=${2:-endpoint-stats}
 REVISION=${3:-0}  # 0 means previous, specific number to go further back
@@ -454,9 +515,11 @@ echo "Rolling back $DEPLOYMENT in namespace $NAMESPACE"
 if [ "$REVISION" -eq "0" ]; then
   # Rollback to previous version
   kubectl rollout undo deployment/$DEPLOYMENT -n $NAMESPACE
+  kubectl annotate deployment/$DEPLOYMENT kubernetes.io/change-cause="Rollback to previous version" --overwrite -n $NAMESPACE
 else
   # Rollback to specific revision
   kubectl rollout undo deployment/$DEPLOYMENT --to-revision=$REVISION -n $NAMESPACE
+  kubectl annotate deployment/$DEPLOYMENT kubernetes.io/change-cause="Rollback to revision $REVISION" --overwrite -n $NAMESPACE
 fi
 
 # Monitor rollout
@@ -464,10 +527,17 @@ kubectl rollout status deployment/$DEPLOYMENT -n $NAMESPACE
 
 # Verify deployment
 echo "Rollback complete. Verifying..."
-kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT
+echo "Pods:"
+kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT -o wide
+
+echo "Rollout history:"
+kubectl rollout history deployment/$DEPLOYMENT -n $NAMESPACE
+
+echo "Current deployment details:"
+kubectl describe deployment $DEPLOYMENT -n $NAMESPACE | grep Image:
 ```
 
-### 9. CI/CD Integration
+### 7. CI/CD Integration
 
 Integrating with CI/CD pipelines ensures automated testing and deployment.
 
@@ -501,7 +571,7 @@ jobs:
       with:
         context: .
         push: ${{ github.event_name != 'pull_request' }}
-        tags: your-registry/flask-api:latest,your-registry/flask-api:${{ github.sha }}
+        tags: shreeraj1746/endpoint-stats:latest,shreeraj1746/endpoint-stats:${{ github.sha }}
 
   deploy:
     needs: build
@@ -517,9 +587,127 @@ jobs:
 
     - name: Deploy to Kubernetes
       run: |
-        kubectl set image deployment/flask-api flask-api=your-registry/flask-api:${{ github.sha }} -n endpoint-stats
+        kubectl set image deployment/flask-api flask-api=shreeraj1746/endpoint-stats:${{ github.sha }} -n endpoint-stats
         kubectl rollout status deployment/flask-api -n endpoint-stats
 ```
+
+### 7. Blue-Green Switching
+
+Script for switching traffic between blue and green deployments:
+
+```bash
+# scripts/blue-green-switch.sh
+#!/bin/bash
+# blue-green-switch.sh - Script for switching traffic between blue and green deployments
+
+set -e  # Exit immediately if a command exits with non-zero status
+
+# Default values
+NAMESPACE=${1:-endpoint-stats}
+TARGET=${2:-green}  # Target environment to switch to (blue or green)
+SERVICE_NAME=${3:-flask-api-bg}
+
+# Validate target
+if [[ "$TARGET" != "blue" && "$TARGET" != "green" ]]; then
+  echo "Error: TARGET must be either 'blue' or 'green'"
+  exit 1
+fi
+
+echo "Switching $SERVICE_NAME to $TARGET environment in namespace $NAMESPACE"
+
+# Update service selector
+kubectl patch service $SERVICE_NAME -n $NAMESPACE -p "{\"spec\":{\"selector\":{\"deployment\":\"$TARGET\"}}}"
+
+# Verify the switch
+echo "Service now pointing to $TARGET deployment"
+kubectl describe service $SERVICE_NAME -n $NAMESPACE | grep -A3 "Selector:"
+
+# Check endpoints
+echo "Service endpoints:"
+kubectl get endpoints -n $NAMESPACE | grep $SERVICE_NAME
+
+# List pods
+echo "Target deployment pods:"
+kubectl get pods -n $NAMESPACE -l "app=flask-api,deployment=$TARGET" -o wide
+```
+
+### 8. Canary Traffic Adjustment
+
+Script for adjusting the ratio of traffic between stable and canary deployments:
+
+```bash
+# scripts/canary-adjust.sh
+#!/bin/bash
+# canary-adjust.sh - Script for adjusting the traffic ratio between stable and canary deployments
+
+set -e  # Exit immediately if a command exits with non-zero status
+
+# Default values
+NAMESPACE=${1:-endpoint-stats}
+CANARY_PERCENT=${2:-20}  # Percentage of traffic to send to canary (0-100)
+STABLE_DEPLOYMENT=${3:-flask-api-stable}
+CANARY_DEPLOYMENT=${4:-flask-api-canary}
+TOTAL_REPLICAS=${5:-5}  # Total number of replicas across both deployments
+
+# Calculate replica counts
+CANARY_REPLICAS=$(( ($TOTAL_REPLICAS * $CANARY_PERCENT) / 100 ))
+STABLE_REPLICAS=$(( $TOTAL_REPLICAS - $CANARY_REPLICAS ))
+
+# Validate canary percent
+if [[ $CANARY_PERCENT -lt 0 || $CANARY_PERCENT -gt 100 ]]; then
+  echo "Error: CANARY_PERCENT must be between 0 and 100"
+  exit 1
+fi
+
+echo "Adjusting canary traffic to $CANARY_PERCENT% ($CANARY_REPLICAS of $TOTAL_REPLICAS replicas)"
+echo "Stable: $STABLE_REPLICAS replicas, Canary: $CANARY_REPLICAS replicas"
+
+# Update stable deployment
+kubectl scale deployment $STABLE_DEPLOYMENT --replicas=$STABLE_REPLICAS -n $NAMESPACE
+
+# Update canary deployment
+kubectl scale deployment $CANARY_DEPLOYMENT --replicas=$CANARY_REPLICAS -n $NAMESPACE
+
+# Monitor rollout for both deployments
+echo "Monitoring stable deployment rollout..."
+kubectl rollout status deployment/$STABLE_DEPLOYMENT -n $NAMESPACE
+
+echo "Monitoring canary deployment rollout..."
+kubectl rollout status deployment/$CANARY_DEPLOYMENT -n $NAMESPACE
+
+# Verify the adjustment
+echo "Deployment complete. Current pod counts:"
+echo "Stable pods:"
+kubectl get pods -n $NAMESPACE -l "app=flask-api,track=stable" | wc -l
+
+echo "Canary pods:"
+kubectl get pods -n $NAMESPACE -l "app=flask-api,track=canary" | wc -l
+
+echo "All endpoint-stats pods:"
+kubectl get pods -n $NAMESPACE -l "app=flask-api"
+```
+
+### 9. Database Service Alias
+
+We created a service alias to handle the database hostname mismatch in the application:
+
+```yaml
+# k8s/db-alias-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: endpoint-stats
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+```
+
+This service alias creates a service named "db" that points to the postgres database pods. It resolves the issue where the application is configured to connect to a database with hostname "db" instead of "postgres".
 
 ## Deployment Strategy Selection Guide
 
@@ -532,19 +720,19 @@ jobs:
 
 ## Implementation Checklist
 
-- [ ] Configure deployment strategy
-- [ ] Set up rolling updates
-- [ ] Configure blue-green deployment (if needed)
-- [ ] Set up canary deployment (if needed)
-- [ ] Implement scaling rules
-- [ ] Configure StatefulSets for stateful components
-- [ ] Create deployment scripts
-- [ ] Configure rollback procedures
-- [ ] Set up CI/CD integration
-- [ ] Test deployment process
-- [ ] Verify scaling behavior
-- [ ] Test rollback procedures
-- [ ] Document deployment procedures
+- [x] Configure deployment strategy
+- [x] Set up rolling updates
+- [x] Configure blue-green deployment
+- [x] Set up canary deployment
+- [x] Implement scaling rules
+- [x] Configure StatefulSets for stateful components
+- [x] Create deployment scripts
+- [x] Configure rollback procedures
+- [x] Set up CI/CD integration
+- [x] Test deployment process
+- [x] Verify scaling behavior
+- [x] Test rollback procedures
+- [x] Document deployment procedures
 
 ## Troubleshooting Deployment Issues
 
@@ -579,6 +767,22 @@ jobs:
 
    # Check pod resource usage
    kubectl top pods -n endpoint-stats
+   ```
+
+4. **Database connectivity issues**:
+
+   ```bash
+   # Check if the database service exists
+   kubectl get service db -n endpoint-stats
+
+   # Check if the database is running
+   kubectl get pods -n endpoint-stats -l app=postgres
+
+   # Check database logs
+   kubectl logs -n endpoint-stats -l app=postgres
+
+   # Check application logs for connection errors
+   kubectl logs -n endpoint-stats -l app=flask-api
    ```
 
 ## Next Steps

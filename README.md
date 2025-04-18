@@ -9,6 +9,7 @@ This project serves as a comprehensive learning experience for transitioning fro
   - [Part 1: Docker Basics](#part-1-docker-basics)
   - [Part 2: Kubernetes Implementation](#part-2-kubernetes-implementation)
 - [Development Tools](#development-tools)
+- [Using the Makefile](#using-the-makefile)
 - [Project Structure](#project-structure)
 - [Additional Resources](#additional-resources)
 - [Getting Started](#getting-started)
@@ -41,6 +42,16 @@ The project has been fully migrated from a Docker-only setup to a Kubernetes inf
 - Python utility for dashboard management
 - Complete YAML configurations for all Kubernetes resources
 - Step-by-step implementation documentation
+
+### Recent Improvements
+
+The project has undergone significant reorganization to improve maintainability and developer experience:
+
+- **Enhanced File Organization**: Files are now logically grouped by function in their respective directories
+- **Makefile Added**: Common operations simplified through a comprehensive Makefile
+- **Improved Documentation**: Added detailed project structure documentation and contributor guidelines
+- **Setup Script**: New developers can get started quickly with the `scripts/setup.sh` script
+- **Environment Variables**: Added `.env.example` with sample configuration
 
 ## Learning Journey
 
@@ -245,6 +256,83 @@ pre-commit install  # Install pre-commit hooks
 pre-commit install --hook-type pre-push  # Install pre-push hooks
 ```
 
+### Using the Makefile
+
+This project includes a comprehensive Makefile that simplifies common development and operational tasks. The Makefile provides a consistent interface for working with the project, regardless of whether you're in development or production.
+
+#### Available Make Commands
+
+| Command | Description |
+|---------|-------------|
+| `make help` | Display all available commands with descriptions |
+| `make setup` | Set up both development and Kubernetes environments |
+| `make setup-dev` | Set up development environment only |
+| `make setup-k8s` | Set up Kubernetes environment only |
+| `make deploy-all` | Deploy all components to Kubernetes |
+| `make test-all` | Run all tests |
+| `make health-check` | Run health check and generate report |
+| `make backup-db` | Backup the database |
+| `make restore-db` | Restore the database from backup |
+| `make clean` | Clean up all resources |
+
+#### Common Usage Examples
+
+**Setting up your environment**:
+```bash
+# Complete setup (both dev and k8s)
+make setup
+
+# Just development environment
+make setup-dev
+
+# Just Kubernetes environment
+make setup-k8s
+```
+
+**Deployment workflow**:
+```bash
+# Deploy all components
+make deploy-all
+
+# Verify deployment health
+make health-check
+
+# View the health report
+cat health-report.txt
+```
+
+**Database operations**:
+```bash
+# Create a database backup
+make backup-db
+
+# Restore from a backup (you'll be prompted for the backup file)
+make restore-db
+```
+
+**Cleanup**:
+```bash
+# Remove all deployed resources
+make clean
+```
+
+#### Extending the Makefile
+
+You can extend the Makefile with your own commands by adding new targets. For example, to add a new target for running a specific test:
+
+```makefile
+test-specific:
+	@echo "Running specific test..."
+	pytest -xvs tests/test_specific.py
+```
+
+Then you can run:
+```bash
+make test-specific
+```
+
+For more details on the project structure and organization, refer to the [Project Structure Documentation](docs/project_structure.md).
+
 ### Pre-commit Checks
 
 The following checks are performed automatically before each commit:
@@ -285,30 +373,52 @@ docker compose run --rm web pre-commit run --all-files
 
 ## Project Structure
 
+The project has been reorganized to improve maintainability and clarity. The structure is now:
+
 - `app.py` - Main Flask application with endpoint tracking
 - `requirements.txt` - Python dependencies
 - `requirements-test.txt` - Test dependencies
 - `Dockerfile` - Docker configuration
 - `docker-compose.yml` - Docker Compose configuration
-- `k8s/` - Kubernetes YAML configurations
-  - `namespace.yaml` - Namespace definition
-  - `flask-api.yaml` - Main application deployment
-  - `postgres.yaml` - Database configuration
-  - `redis.yml` - Redis cache configuration
-  - `persistent-volumes.yaml` - Storage configuration
-  - `secrets.yaml` - Secure credentials
-  - `ingress.yaml` - External access rules
-  - `monitoring/` - Monitoring configurations
-    - `prometheus-*.yaml` - Prometheus setup files
-    - `grafana-*.yaml` - Grafana setup files
-- `scripts/` - Utility scripts
-  - `dashboard-checker.py` - Grafana dashboard management utility
-- `create-dashboard.json` - Grafana dashboard template
+- `Makefile` - Common operations for development and deployment
+- `.env.example` - Example environment variables
+- `CONTRIBUTING.md` - Guidelines for contributors
+- `k8s/` - Kubernetes YAML configurations organized by component
+  - `core/` - Core application components (namespace, Flask API)
+  - `database/` - Database configurations
+  - `cache/` - Redis cache configurations
+  - `storage/` - Persistent storage configurations
+  - `networking/` - Ingress and service configurations
+  - `security/` - RBAC, network policies, and secrets
+  - `monitoring/` - Monitoring stack configurations
+  - `deployment-strategy/` - Deployment configuration for rollouts, scaling
+  - `maintenance/` - Maintenance tasks, backup jobs, etc.
+- `scripts/` - Operational scripts organized by function
+  - `deployment/` - Deployment and rollback scripts
+  - `backup/` - Backup and restore scripts
+  - `monitoring/` - Monitoring configuration scripts
+  - `health-check.sh` - Health check utility
+  - `setup.sh` - Environment setup script
 - `tests/` - Test files
-- `.gitignore` - Git ignore rules
-- `.pre-commit-config.yaml` - Pre-commit hooks configuration
-- `pyproject.toml` - Python tool configurations
 - `docs/` - Kubernetes implementation guides and documentation
+  - `project_structure.md` - Detailed project structure documentation
+
+For a more detailed explanation of the project structure, please see [docs/project_structure.md](docs/project_structure.md).
+
+### Deploying with the Makefile
+
+The entire deployment process described in the "Deploying the Complete Application" section below can now be simplified to:
+
+```bash
+# Set up Kubernetes environment
+make setup-k8s
+
+# Deploy all components
+make deploy-all
+
+# Verify deployment
+make health-check
+```
 
 ## Additional Resources
 
@@ -342,38 +452,48 @@ This branch represents the initial state of the project with only the Docker set
 
 ### Deploying the Complete Application
 
-To deploy the complete application with all Kubernetes components:
+The recommended way to deploy the complete application is using the Makefile:
+
+```bash
+# Set up Kubernetes environment
+make setup-k8s
+
+# Deploy all components
+make deploy-all
+```
+
+If you prefer to deploy components individually, you can use these commands:
 
 1. Ensure you have a working Kubernetes cluster (Minikube, Kind, or Docker Desktop Kubernetes)
 
 2. Create the namespace:
    ```bash
-   kubectl apply -f k8s/namespace.yaml
+   kubectl apply -f k8s/core/namespace.yaml
    ```
 
 3. Deploy the persistent volumes:
    ```bash
-   kubectl apply -f k8s/persistent-volumes.yaml
+   kubectl apply -f k8s/storage/persistent-volumes.yaml
    ```
 
 4. Deploy the secrets:
    ```bash
-   kubectl apply -f k8s/secrets.yaml
+   kubectl apply -f k8s/security/secrets.yaml
    ```
 
 5. Deploy the database:
    ```bash
-   kubectl apply -f k8s/postgres.yaml
+   kubectl apply -f k8s/database/postgres.yaml
    ```
 
 6. Deploy Redis:
    ```bash
-   kubectl apply -f k8s/redis.yml
+   kubectl apply -f k8s/cache/redis.yaml
    ```
 
 7. Deploy the Flask API:
    ```bash
-   kubectl apply -f k8s/flask-api.yaml
+   kubectl apply -f k8s/core/flask-api.yaml
    ```
 
 8. Deploy the monitoring stack:
@@ -383,13 +503,21 @@ To deploy the complete application with all Kubernetes components:
 
 9. Deploy the ingress rules:
    ```bash
-   kubectl apply -f k8s/ingress.yaml
+   kubectl apply -f k8s/networking/ingress.yaml
    ```
 
 10. Verify the dashboard is properly set up:
     ```bash
-    python scripts/dashboard-checker.py
+    python scripts/monitoring/dashboard-checker.py
     ```
+
+Once deployment is complete, run a health check:
+
+```bash
+make health-check
+# or manually:
+./scripts/health-check.sh health-report.txt
+```
 
 ### Exploring the Monitoring Stack
 

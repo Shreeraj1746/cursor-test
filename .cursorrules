@@ -41,6 +41,7 @@ ON_FILE_CHANGE: |
 - Use `ruff` for code formatting.
 
 # Others
+- **Avoid commands that wait indefinitely. Use a timeout mechanism where applicable**
 - **When explaining code, provide clear logical explanations and code comments.**
 - **When making suggestions, explain the rationale and potential trade-offs.**
 - **Do not over-engineer solutions. Strive for simplicity and maintainability while still being efficient.**

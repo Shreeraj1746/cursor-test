@@ -1,10 +1,1 @@
-# This file defines a dedicated Kubernetes namespace for the Endpoint Statistics application.
-# Using a separate namespace provides isolation from other applications in the cluster,
-# allowing for better resource management, access control, and organization.
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: endpoint-stats  # Unique identifier for the namespace
-  labels:
-    name: endpoint-stats  # Label that can be used for selecting this namespace
+core/namespace.yaml

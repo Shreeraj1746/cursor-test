@@ -1,0 +1,64 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: system-maintenance
+  namespace: endpoint-stats
+spec:
+  schedule: "0 2 * * *"  # Run daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: maintenance-sa
+          containers:
+          - name: maintenance
+            image: bitnami/kubectl:latest
+            command: ["/bin/bash", "-c"]
+            args:
+            - |
+              # 1. Database maintenance
+              echo "Running database maintenance..."
+              kubectl exec -n endpoint-stats $(kubectl get pods -n endpoint-stats -l app=postgres -o name | head -1) -- bash -c "
+                export PGPASSWORD=\$(cat /etc/postgres-secret/password);
+                # Analyze tables to update statistics
+                psql -U admin -d endpoint_stats -c 'VACUUM ANALYZE;'
+                # Remove dead rows to reclaim space
+                psql -U admin -d endpoint_stats -c 'VACUUM FULL;'
+                # Rebuild indices
+                psql -U admin -d endpoint_stats -c 'REINDEX DATABASE endpoint_stats;'
+                # Cleanup temporary objects
+                psql -U admin -d endpoint_stats -c 'DROP TABLE IF EXISTS temp_stats;'
+              "
+
+              # 2. Redis maintenance
+              echo "Running Redis maintenance..."
+              kubectl exec -n endpoint-stats $(kubectl get pods -n endpoint-stats -l app=redis -o name | head -1) -- bash -c "
+                # Remove old cache entries
+                redis-cli --raw -h localhost keys 'cache:*' | xargs -r redis-cli del
+                # Run memory optimization
+                redis-cli --raw -h localhost MEMORY PURGE
+                # Save current dataset
+                redis-cli --raw -h localhost SAVE
+              "
+
+              # 3. Log rotation and cleanup
+              echo "Cleaning old logs..."
+              kubectl get pods -n endpoint-stats --no-headers | awk '{print $1}' | xargs -I{} kubectl exec -n endpoint-stats {} -- bash -c "
+                if [ -d /var/log ]; then
+                  find /var/log -type f -name '*.log' -mtime +7 -delete || true
+                fi
+              " || true
+
+              # 4. Clear old completed jobs
+              echo "Cleaning old jobs..."
+              kubectl delete jobs -n endpoint-stats --field-selector status.successful=1 --field-selector status.completionTime\\<$(date -d '7 days ago' -Ins)
+
+              # 5. Report maintenance completion
+              echo "Maintenance completed at $(date)"
+            volumeMounts:
+            - name: maintenance-volume
+              mountPath: /maintenance
+          volumes:
+          - name: maintenance-volume
+            emptyDir: {}
+          restartPolicy: OnFailure

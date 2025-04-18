@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-api
+  namespace: endpoint-stats
+  labels:
+    app: flask-api
+    component: api
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1         # Number of pods that can be created above desired count
+      maxUnavailable: 0   # Number of pods that can be unavailable during update
+  selector:
+    matchLabels:
+      app: flask-api
+  template:
+    metadata:
+      labels:
+        app: flask-api
+        version: "1.0.0"  # Version label helps with traffic management
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: flask-api
+        image: shreeraj1746/endpoint-stats:latest
+        ports:
+        - containerPort: 9999
+          name: http
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        readinessProbe:   # Ensures traffic only goes to ready pods
+          httpGet:
+            path: /health
+            port: 9999
+          initialDelaySeconds: 5    # Wait time before first probe
+          periodSeconds: 10         # Probe frequency
+          timeoutSeconds: 2         # Probe timeout
+          successThreshold: 1       # Success count required
+          failureThreshold: 3       # Failure count before marking unready
+        livenessProbe:    # Detects if app is running correctly
+          httpGet:
+            path: /health
+            port: 9999
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 3
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]  # Grace period for connections to drain
+      terminationGracePeriodSeconds: 30  # Time for pod to shut down gracefully

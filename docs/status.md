@@ -13,9 +13,10 @@ This document tracks the current status of the Kubernetes monitoring system impl
 
 | Component | Status | Details |
 |-----------|--------|---------|
-| Flask API | ✅ Deployed | 2 replicas running on port 9999 with `/metrics` endpoint |
+| Flask API | ✅ Deployed | 3 replicas running on port 9999 with `/metrics` endpoint |
 | PostgreSQL | ✅ Deployed | Running as a service on port 5432 |
 | Redis | ✅ Deployed | Running as a service on port 6379 |
+| Database Alias | ✅ Created | Service "db" pointing to PostgreSQL for application compatibility |
 
 ## 3. Monitoring Stack
 
@@ -25,6 +26,8 @@ This document tracks the current status of the Kubernetes monitoring system impl
 | AlertManager | ✅ Deployed | Running on port 9093 |
 | Grafana | ✅ Deployed | Running on port 3000 with Prometheus data source |
 | kube-state-metrics | ✅ Deployed | Running and exposing Kubernetes object metrics |
+| Custom Dashboards | ✅ Created | Endpoint Statistics Dashboard configured |
+| Custom Alerts | ✅ Configured | System and application-specific alerts defined |
 
 ## 4. Configuration Resources
 
@@ -37,14 +40,18 @@ This document tracks the current status of the Kubernetes monitoring system impl
 | flask-api-secret | ✅ Created | Secret for Flask API credentials |
 | prometheus-pvc | ✅ Created | PersistentVolumeClaim for Prometheus storage |
 | kube-state-metrics RBAC | ✅ Created | ClusterRole and ClusterRoleBinding for kube-state-metrics |
+| maintenance-sa | ✅ Created | ServiceAccount for maintenance jobs |
 
 ## 5. Alert Rules
 
 | Rule | Status | Description |
 |------|--------|-------------|
-| HighErrorRate | ✅ Configured | Alerts when error rate > 10% for 5 minutes (critical) |
-| SlowResponseTime | ✅ Configured | Alerts when 95p latency > 2s for 10 minutes (warning) |
-| HighCPUUsage | ✅ Configured | Alerts when CPU > 80% for 15 minutes (warning) |
+| HighErrorRate | ✅ Configured | Alerts when error rate > 5% for 5 minutes (critical) |
+| SlowResponseTime | ✅ Configured | Alerts when 95p latency > 1s for 5 minutes (warning) |
+| HighCPUUsage | ✅ Configured | Alerts when CPU > 80% for 10 minutes (warning) |
+| DatabaseConnectionIssues | ✅ Configured | Alerts when PostgreSQL exporter is down (critical) |
+| RedisConnectionIssues | ✅ Configured | Alerts when Redis exporter is down (critical) |
+| PodRestartingFrequently | ✅ Configured | Alerts when pod restarts > 5 times in 1 hour (warning) |
 
 ## 6. Service Discovery
 
@@ -82,13 +89,32 @@ This document tracks the current status of the Kubernetes monitoring system impl
 | Redis | ✅ ClusterIP | ❌ Not exposed |
 | kube-state-metrics | ✅ ClusterIP | ❌ Not exposed (accessible via port-forward) |
 
-## 10. Missing Components/Improvements
+## 10. Deployment Strategies
 
-1. Enhanced application metrics for more detailed monitoring
-2. External access to monitoring tools (Ingress or LoadBalancer)
-3. Proper Slack webhook URL configuration
-4. Additional Grafana dashboards for application-specific metrics
-5. User authentication for monitoring tools
+| Strategy | Status | Details |
+|----------|--------|---------|
+| Rolling Updates | ✅ Implemented | Deployment with maxSurge=1, maxUnavailable=0, health probes and resource limits |
+| Horizontal Pod Autoscaler | ✅ Implemented | CPU and memory-based autoscaling (2-10 replicas) |
+
+## 11. Deployment Scripts
+
+| Script | Status | Details |
+|--------|--------|---------|
+| deploy.sh | ✅ Created | Script for deploying new versions with proper annotations |
+| rollback.sh | ✅ Created | Script for rolling back to previous versions or specific revisions |
+
+## 12. Maintenance
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Database Backup | ✅ Implemented | Daily database backups with 10-day retention |
+| Backup Verification | ✅ Implemented | Daily validation of most recent backup |
+| System Maintenance | ✅ Implemented | Daily maintenance tasks for database, Redis, and logs |
+| Health Check Script | ✅ Created | Comprehensive system health check script |
+| Disaster Recovery | ✅ Documented | DR plan and restoration script implemented |
+| Performance Tuning | ✅ Documented | Tuning guide for database and application optimization |
+| Capacity Planning | ✅ Documented | Resource projections and scaling guidelines |
+| Log Retention | ✅ Documented | Policy for various log types and retention periods |
 
 ## Architecture Diagram
 
@@ -96,10 +122,15 @@ This document tracks the current status of the Kubernetes monitoring system impl
 graph TD
     subgraph "Kubernetes Cluster"
         subgraph "endpoint-stats Namespace"
-            Flask["Flask API<br/>Pods (2 replicas)<br/>Port: 9999<br/>Metrics: /metrics"]
+            Flask["Flask API<br/>Pods (3 replicas)<br/>Port: 9999<br/>Metrics: /metrics"]
             Postgres["PostgreSQL<br/>Database"]
+            DbAlias["DB Alias Service<br/>→ PostgreSQL"]
             Redis["Redis<br/>Cache"]
             KSM["kube-state-metrics<br/>Metrics for K8s objects"]
+
+            subgraph "Deployment Strategies"
+                HPA["HorizontalPodAutoscaler<br/>CPU/Memory Based"]
+            end
 
             subgraph "Monitoring Stack"
                 Prometheus["Prometheus<br/>Time Series DB<br/>Port: 9090"]
@@ -113,6 +144,20 @@ graph TD
 
                 PVC["PVC:<br/>prometheus-pvc"]
             end
+
+            subgraph "Maintenance"
+                Backups["Database Backup<br/>CronJob (Daily)"]
+                BkpVerify["Backup Verification<br/>CronJob (Daily)"]
+                SysMaint["System Maintenance<br/>CronJob (Daily)"]
+                BkpPVC["PVC:<br/>backup-pvc"]
+                MaintSA["ServiceAccount:<br/>maintenance-sa"]
+            end
+
+            Flask -- "uses" --> DbAlias
+            DbAlias -- "points to" --> Postgres
+            Flask -- "uses" --> Redis
+
+            HPA -- "scales" --> Flask
 
             Flask -- "exposes metrics" --> Prometheus
             Postgres -- "exposes metrics via exporter" --> Prometheus
@@ -128,8 +173,12 @@ graph TD
             ConfigAlertmanager -- "configures" --> AlertManager
             ConfigDatasources -- "configures" --> Grafana
 
-            Flask -- "uses" --> Postgres
-            Flask -- "uses" --> Redis
+            Backups -- "backs up" --> Postgres
+            Backups -- "stores to" --> BkpPVC
+            BkpVerify -- "validates" --> BkpPVC
+            SysMaint -- "maintains" --> Postgres
+            SysMaint -- "maintains" --> Redis
+            SysMaint -- "uses" --> MaintSA
         end
     end
 
@@ -138,28 +187,40 @@ graph TD
     User["User/Admin"] -- "views dashboards" --> Grafana
     User -- "views alerts" --> AlertManager
     User -- "queries metrics" --> Prometheus
+    User -- "manages deployments" --> DeployScripts["Deployment Scripts<br/>deploy.sh<br/>rollback.sh"]
+    User -- "runs health checks" --> HealthChecks["Health Check<br/>health-check.sh"]
+    User -- "performs DR" --> DR["Disaster Recovery<br/>dr-restore.sh"]
+    DeployScripts -- "control" --> Flask
+    HealthChecks -- "monitors" --> Flask
+    HealthChecks -- "monitors" --> Postgres
+    HealthChecks -- "monitors" --> Redis
+    DR -- "restores" --> Postgres
 ```
 
 ## Last Updated
 
-April 17, 2025
+April 20, 2025
 
 # Project Status
 
 ## Current Progress
-- Added and deployed kube-state-metrics to monitor Kubernetes objects state and metrics
+
+1. ✅ Verified health of the deployment:
+   - Flask API deployment is running with appropriate replicas
+   - Service responds correctly to health checks
+
+## Issues Encountered
+
+1. HPA metrics collection occasionally shows delay in reporting
 
 ## Completed Items
-- Created kube-state-metrics deployment with appropriate RBAC permissions
-- Configured ServiceMonitor for Prometheus to scrape kube-state-metrics
-- Set up resource limits and health probes for kube-state-metrics
-- Successfully tested metrics collection and verified Prometheus integration
-- Updated documentation to reflect the new component
 
-## To Do
-- Create Grafana dashboards for Kubernetes cluster monitoring
-- Implement network policies for kube-state-metrics
-- Consider setting up alerts for cluster state issues
+1. ✅ Verified system health with health check script
+
+## Next Steps
+
+1. Set up automated health checks for deployments
 
 ## Known Issues
-- None at the moment
+- HPA currently shows \<unknown\> for CPU and memory metrics (waiting for metrics to be collected)
+- Application lacks detailed response time and status code metrics

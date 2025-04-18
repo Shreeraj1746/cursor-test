@@ -1,0 +1,21 @@
+# This file defines the Kubernetes Ingress resource for the Endpoint Statistics application.
+# Ingress exposes HTTP and HTTPS routes from outside the cluster to services within
+# the cluster, providing external access to the application via a domain name.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flask-api-ingress
+  namespace: endpoint-stats
+spec:
+  rules:
+    - host: api.endpoint-stats.com  # Domain name to access the API
+      http:
+        paths:
+          - path: /                 # Match all paths starting with /
+            pathType: Prefix        # Type of path matching (Prefix, Exact, or ImplementationSpecific)
+            backend:
+              service:
+                name: flask-api     # Service to route traffic to
+                port:
+                  number: 9999      # Port on the service to route traffic to

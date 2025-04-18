@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-verification
+  namespace: endpoint-stats
+spec:
+  schedule: "0 4 * * *"  # Run daily at 4 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: verify
+            image: postgres:14
+            command: ["/bin/sh", "-c"]
+            args:
+            - |
+              # Find the most recent backup
+              LATEST_BACKUP=$(find /backup -name "backup-*.sql" -type f -printf "%T@ %p\n" | sort -n | tail -1 | cut -f2- -d" ")
+
+              if [ -z "$LATEST_BACKUP" ]; then
+                echo "No backups found!" | tee -a /backup/verification.log
+                exit 1
+              fi
+
+              echo "Verifying backup: $LATEST_BACKUP" | tee -a /backup/verification.log
+
+              # Create a temporary database for testing
+              export PGPASSWORD="$POSTGRES_PASSWORD"
+              psql -h postgres -U admin -d postgres -c "DROP DATABASE IF EXISTS backup_verify;"
+              psql -h postgres -U admin -d postgres -c "CREATE DATABASE backup_verify;"
+
+              # Restore the backup to the test database
+              psql -h postgres -U admin -d backup_verify < $LATEST_BACKUP
+
+              # Run some basic validation queries
+              ROW_COUNT=$(psql -h postgres -U admin -d backup_verify -t -c "SELECT count(*) FROM endpoints;")
+
+              echo "Verification complete. Row count: $ROW_COUNT" | tee -a /backup/verification.log
+
+              # Clean up
+              psql -h postgres -U admin -d postgres -c "DROP DATABASE backup_verify;"
+
+              # Save verification results
+              echo "$(date) - Backup $LATEST_BACKUP verified successfully. Row count: $ROW_COUNT" >> /backup/verification.log
+
+              # Exit with error if row count is 0 (possible empty backup)
+              if [ "$ROW_COUNT" -eq "0" ]; then
+                echo "ERROR: Backup contains no data!" | tee -a /backup/verification.log
+                exit 1
+              fi
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+          volumes:
+          - name: backup-volume
+            persistentVolumeClaim:
+              claimName: backup-pvc
+          restartPolicy: OnFailure

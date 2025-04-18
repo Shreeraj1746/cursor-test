@@ -1,0 +1,41 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flask-api-hpa
+  namespace: endpoint-stats
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flask-api
+  minReplicas: 2          # Minimum number of pods
+  maxReplicas: 10         # Maximum number of pods
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70  # Target CPU utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80  # Target memory utilization
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait before scaling down
+      policies:
+      - type: Percent
+        value: 50                      # Scale down by 50% at a time
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0    # Scale up immediately
+      policies:
+      - type: Percent
+        value: 100                     # Double pods if necessary
+        periodSeconds: 60
+      - type: Pods
+        value: 4                       # But add max 4 pods per minute
+        periodSeconds: 60
